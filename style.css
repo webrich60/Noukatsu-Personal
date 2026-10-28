@@ -3,3 +3,15 @@
 /* Fixed footer and toast must never cover the action buttons. */
 main{padding-bottom:135px}
 .toast{pointer-events:none}
+
+/* Personal merged version - owl mascot and uninterrupted game space */
+.owl{padding:2px;overflow:hidden}.owl img{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain}
+.owl-photo{width:64px;height:64px;object-fit:contain;vertical-align:middle;filter:drop-shadow(0 3px 2px #0001)}
+.bottom{grid-template-columns:repeat(5,1fr)}
+.bottom button{font-size:11px;padding:4px 1px;min-width:0}
+.bottom button span{font-size:21px}
+.shell.show-game .top{display:none}
+.shell.show-game main{padding:4px 3px 105px;min-height:auto}
+.shell.show-game .game-frame{height:calc(100dvh - 145px);border:2px solid #b9dfd4;border-radius:13px;display:block}
+.shell.show-game .game-back{width:100%;min-height:42px;margin:0 0 4px;padding:7px 10px;text-align:left;font-size:15px}
+@media(max-width:370px){.bottom button{font-size:10px}}

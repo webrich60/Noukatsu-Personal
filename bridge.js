@@ -1,11 +1,26 @@
-/* Noukatsu Personal game result bridge v0.1.0. Loaded after original scripts. */
+/* 個人版への履歴・プロフィール連携：元ゲームロジックには触れません */
 (()=>{'use strict';
 if(window.__noukatsuPersonalBridge)return;window.__noukatsuPersonalBridge=true;
-let lastKey='',lastAt=0;
-function notify(title,score,mode){const key=String(title)+'|'+String(score);if(key===lastKey&&Date.now()-lastAt<1500)return;lastKey=key;lastAt=Date.now();try{window.parent.postMessage({type:'NOUKATSU_GAME_RESULT',event:{title:String(title||'脳活ゲーム終了'),score:String(score||'完了'),mode:String(mode||'game')}},window.location.origin==='null'?'*':window.location.origin)}catch(e){console.warn('game bridge failed',e)}}
-function wrap(){if(typeof window.showResultScreen!=='function')return false;const old=window.showResultScreen;if(old.__wbrWrapped)return true;const replacement=function(emoji,title,label,scoreText,comment,challengePoints){const result=old.apply(this,arguments);notify(title,`${label||'結果'}：${scoreText||''}${Number.isFinite(challengePoints)?'／ポイント '+challengePoints:''}`,window.currentMode||'game');return result};replacement.__wbrWrapped=true;window.showResultScreen=replacement;return true}
-if(!wrap()){
-const screen=document.getElementById('resultScreen');if(!screen)return;
-const ob=new MutationObserver(()=>{if(screen.classList.contains('hidden')||screen.style.display==='none')return;const h=screen.querySelector('#resultTitle')?.textContent||'脳活ゲーム';const txt=screen.innerText.slice(0,140);notify(h,txt,'game')});ob.observe(screen,{attributes:true,attributeFilter:['class','style']});
+const dest=location.origin==='null'?'*':location.origin;let lastKey='',lastAt=0;
+function notify(type,payload){try{window.parent.postMessage({type,...payload},dest)}catch(e){console.warn('脳活履歴連携:',e)}}
+function resultTitle(emoji,title,label,scoreText,comment,points){
+ const key=String(title)+'|'+String(scoreText);if(key===lastKey&&Date.now()-lastAt<1500)return;
+ lastKey=key;lastAt=Date.now();
+ const mode=typeof currentMode!=='undefined'?currentMode:'game';
+ const level=typeof currentDifficulty!=='undefined'?currentDifficulty:'';
+ notify('NOUKATSU_GAME_RESULT',{event:{title:String(title||'脳活ゲーム終了'),score:`${label||'結果'}：${scoreText||''}${Number.isFinite(points)?'／チャレンジポイント '+points:''}`,mode:String(mode||'game'),level:String(level||'')}});
+}
+if(typeof window.showResultScreen==='function'){
+ const previous=window.showResultScreen;
+ window.showResultScreen=function(emoji,title,label,scoreText,comment,points){const value=previous.apply(this,arguments);resultTitle(emoji,title,label,scoreText,comment,points);return value;};
+}
+window.addEventListener('message',e=>{
+ if(e.source!==window.parent||e.origin!==location.origin||e.data?.type!=='NOUKATSU_PERSONAL_PROFILE')return;
+ const p=e.data.profile;if(!p||typeof p.name!=='string')return;
+ try{if(typeof userProfile!=='undefined'){userProfile.name=p.name.slice(0,18);userProfile.age=Number(p.age)||null;if(typeof updateUserDisplay==='function')updateUserDisplay();}}catch(err){console.warn(err)}
+});
+if(typeof window.saveUserProfile==='function'){
+ const previousSave=window.saveUserProfile;
+ window.saveUserProfile=function(){const r=previousSave.apply(this,arguments);try{notify('NOUKATSU_PROFILE_UPDATED',{profile:{name:userProfile.name||'',age:userProfile.age||''}})}catch(e){}return r;};
 }
 })();
