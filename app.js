@@ -1,5 +1,5 @@
 (()=>{'use strict';
-window.__NOUKATSU_PERSONAL_VERSION__='1.1.2';
+window.__NOUKATSU_PERSONAL_VERSION__='1.1.3';
 const STORE='wbr-noukatsu-personal-v010',DEFAULT={profile:{name:'',age:''},settings:{sheetUrl:'',token:''},history:[],pending:null};
 // 端末内の記録・設定を保護する。localStorageが無効な環境ではIndexedDBにも保存する。
 // 別の端末には自動的に同期されないため、データの定期バックアップを推奨。
@@ -7,6 +7,10 @@ function normalize(raw){return raw&&Array.isArray(raw.history)?{...DEFAULT,...ra
 function readLocal(){try{return JSON.parse(localStorage.getItem(STORE)||'null')}catch{return null}}
 let db=normalize(readLocal()),view='home',mode='balance',level='beginner',side='left',eyes='open',period=30,busySync=false,running=false,elapsed=0,mark=0,countdown=0,runPhase='ready',timerId=null,lastResult=null,completed=false;
 let initialized=false,storageMethod='確認中',saveQueue=Promise.resolve(),storageFailures=[];
+// 元12ゲームからの結果は、メッセージと保存待ち箱の二重経路で受け取る。
+const GAME_OUTBOX='wbr-noukatsu-personal-game-outbox-v1';
+let gameIntake=Promise.resolve(), resyncRequested=false;
+
 const DB_NAME='wbr-noukatsu-personal-storage',DB_STORE='state';
 let idbConnection=null;
 function openIDB(){
@@ -60,6 +64,8 @@ async function initializeStorage(){
  else storageMethod='新規（まだ保存していません）';
  initialized=true;
  render();
+ // ゲーム画面を閉じた際や転送処理が途切れた場合も、結果を復元する。
+ void importGameOutbox();
  if(syncSettingOk())setTimeout(()=>void syncAll(),1800);
 }
 
@@ -129,12 +135,52 @@ host.append(frame);
 
 function drawChart(records){let vals=records.filter(r=>r.source==='physical'&&Number.isFinite(r.game==='balance'?r.durationSec:r.count)).slice(0,20).reverse().map(r=>r.game==='balance'?r.durationSec:r.count);if(!vals.length)return'<div class="empty">まだ記録がありません</div>';let max=Math.max(1,...vals),pts=vals.map((v,i)=>`${32+i*(285/Math.max(1,vals.length-1))},${143-v/max*110}`).join(' ');return `<svg class="chart" viewBox="0 0 344 170" role="img" aria-label="最新${vals.length}回の推移を示す折れ線グラフ"><line x1="31" y1="13" x2="31" y2="146" stroke="#82a6c6"/><line x1="31" y1="146" x2="328" y2="146" stroke="#82a6c6"/><line x1="31" y1="78" x2="328" y2="78" stroke="#dfebf4" stroke-dasharray="4 4"/><text x="5" y="16" font-size="10" fill="#365b76">${max.toFixed(0)}</text><text x="15" y="147" font-size="10" fill="#365b76">0</text><polyline points="${pts}" fill="none" stroke="#2389d7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${vals.map((v,i)=>`<circle cx="${32+i*(285/Math.max(1,vals.length-1))}" cy="${143-v/max*110}" r="4" fill="#1682cf"/>`).join('')}</svg>`}
 function renderHistory(){const t=Date.now(),subset=db.history.filter(r=>period===0||new Date(r.timestamp).getTime()>t-period*864e5);const types=['balance','chair','step','dual'];const compare=db.history.filter(r=>r.source==='physical'&&r.game===mode&&r.level===level&&(mode!=='balance'||(r.side===side&&r.eyes===eyes))&&(period===0||new Date(r.timestamp).getTime()>t-period*864e5));app.innerHTML=`<h1>📊 履歴・グラフ</h1><p class="lead">測定の結果はスマホ内に残ります。同じ条件を選ぶと変化が追いやすいよ。</p><div class="pillrow">${[[7,'１週間'],[30,'１か月'],[90,'３か月'],[0,'全期間']].map(([d,s])=>`<button class="pill ${period===d?'selected':''}" data-action="period" data-period="${d}">${s}</button>`).join('')}</div><div class="card"><h3>📈 フィジカル脳活の記録</h3><label class="label">種目・難易度・測定条件ごとに比較</label><select class="field" id="chart-mode">${types.map(k=>`<option value="${k}" ${k===mode?'selected':''}>${MODE[k].name}</option>`).join('')}</select><label class="label">難易度</label><div class="pillrow">${Object.entries(LEVEL).map(([k,v])=>`<button class="pill ${level===k?'selected':''}" data-action="history-level" data-level="${k}">${v}</button>`).join('')}</div>${mode==='balance'?`<div class="pillrow"><button class="pill ${side==='left'?'selected':''}" data-action="history-side" data-side="left">左足</button><button class="pill ${side==='right'?'selected':''}" data-action="history-side" data-side="right">右足</button></div><div class="pillrow"><button class="pill ${eyes==='open'?'selected':''}" data-action="history-eyes" data-eyes="open">開眼</button><button class="pill ${eyes==='closed'?'selected':''}" data-action="history-eyes" data-eyes="closed">閉眼</button></div>`:''}<div id="chartHolder" style="margin-top:12px">${drawChart(compare)}</div><p class="small" style="margin-top:7px">※ 同じ難易度・支持足・開眼/閉眼の条件だけをグラフで比較しています。補助あり・なしを混同しません。</p></div><div class="card"><h3>最新の記録（${subset.length}件）</h3>${subset.length?subset.slice(0,100).map(r=>`<div class="item"><div class="item-title">${safe(r.title)}　<span class="tag">${safe(LEVEL[r.level]||({slow:'ゆっくり',normal:'ふつう',fast:'はやい'}[r.level])||'ゲーム')}</span></div><div>${safe(summary(r))}</div><div class="item-sub">${new Date(r.timestamp).toLocaleString('ja-JP')}　<span class="${r.synced?'sync-ok':'sync-wait'}">${r.synced?'✓ シート保存確認済み':'◯ 未送信・未確認'}</span></div></div>`).join(''):'<div class="empty">まずは１回チャレンジしてみよう！</div>'}</div><div class="button-row"><button class="secondary" data-action="csv">CSV書き出し</button><button class="secondary" data-action="json">JSON保存</button></div><div class="soft-note">履歴を削除せずにバックアップできるよ。表示は最新100件まで、書き出しは全件です。</div>`}
-function renderSettings(){app.innerHTML=`<h1>⚙ 個人設定・自動転記</h1><div class="soft-note">🦉 これは自分ひとりで使う個人版です。ログイン・課金・サブスクはありません。記録はまずこの端末に保存し、設定したGASへ自動転記します。</div><div class="card blue"><h3>👤 プロフィール</h3><label class="label" for="name">呼び名</label><input class="field" id="name" maxlength="18" value="${safe(db.profile.name)}"><label class="label" for="age">年齢（任意）</label><input class="field" id="age" type="number" min="1" max="120" inputmode="numeric" value="${safe(db.profile.age)}"><button class="secondary full" style="margin-top:13px" data-action="profile-save">プロフィールを保存</button></div><div class="card mint"><h3>📗 Googleスプレッドシート連携</h3><p class="lead">GASを公開して、ウェブアプリのURLと共有トークンを入れてね。</p><label class="label" for="sheet-url">GAS WebアプリURL</label><input class="field" id="sheet-url" type="url" spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec" value="${safe(db.settings.sheetUrl)}"><label class="label" for="sheet-token">同期トークン（GASと同じ値）</label><input class="field" id="sheet-token" type="password" autocomplete="off" spellcheck="false" placeholder="GASが発行した64文字などをそのまま" value="${safe(db.settings.token)}"><div class="soft-note warn">トークンは64文字でも正常です。この端末内に保存します。共有PCでは使用しないでください。GASは本人専用のものを使用してください。</div><button class="secondary full" data-action="sync-save">連携設定を保存</button><button class="primary full" style="margin-top:12px" data-action="sync">↻ 未確認の記録を転記・照合</button><p class="small" style="margin-top:11px">保存待ち：${db.history.filter(x=>!x.synced).length}件／確認済み：${db.history.filter(x=>x.synced).length}件<br>端末内の保存方式：${safe(storageMethod)}</p><button class="secondary full" data-action="storage-check" style="margin-top:12px">🔎 保存機能をチェック</button><div id="storage-diagnostic" class="small" role="status" aria-live="polite" style="margin-top:9px"></div></div><div class="card"><h3>🗄 バックアップ</h3><div class="button-row"><button class="secondary" data-action="csv">CSVを保存</button><button class="secondary" data-action="json">JSONを保存</button></div><label class="label">バックアップから復元（同じIDは重複追加しません）</label><input class="field" id="import" type="file" accept=".json,application/json"><p class="small" style="margin-top:9px">ブラウザの閲覧データを消すと端末内の記録は失われます。シート連携と定期バックアップが安心です。</p></div>`}
+function renderSettings(){app.innerHTML=`<h1>⚙ 個人設定・自動転記</h1><div class="soft-note">🦉 これは自分ひとりで使う個人版です。ログイン・課金・サブスクはありません。記録はまずこの端末に保存し、設定したGASへ自動転記します。</div><div class="card blue"><h3>👤 プロフィール</h3><label class="label" for="name">呼び名</label><input class="field" id="name" maxlength="18" value="${safe(db.profile.name)}"><label class="label" for="age">年齢（任意）</label><input class="field" id="age" type="number" min="1" max="120" inputmode="numeric" value="${safe(db.profile.age)}"><button class="secondary full" style="margin-top:13px" data-action="profile-save">プロフィールを保存</button></div><div class="card mint"><h3>📗 Googleスプレッドシート連携</h3><p class="lead">GASを公開して、ウェブアプリのURLと共有トークンを入れてね。</p><label class="label" for="sheet-url">GAS WebアプリURL</label><input class="field" id="sheet-url" type="url" spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec" value="${safe(db.settings.sheetUrl)}"><label class="label" for="sheet-token">同期トークン（GASと同じ値）</label><input class="field" id="sheet-token" type="password" autocomplete="off" spellcheck="false" placeholder="GASが発行した64文字などをそのまま" value="${safe(db.settings.token)}"><div class="soft-note warn">トークンは64文字でも正常です。この端末内に保存します。共有PCでは使用しないでください。GASは本人専用のものを使用してください。</div><button class="secondary full" data-action="sync-save">連携設定を保存</button><button class="primary full" style="margin-top:12px" data-action="sync">↻ 未確認の記録を転記・照合</button><p class="small" style="margin-top:11px">保存待ち：${db.history.filter(x=>!x.synced).length}件／確認済み：${db.history.filter(x=>x.synced).length}件<br>端末内の保存方式：${safe(storageMethod)}</p><button class="secondary full" data-action="storage-check" style="margin-top:12px">🔎 保存機能をチェック</button><button class="secondary full" data-action="recover-games" style="margin-top:10px">🧠 ゲーム結果を再取込</button><p class="small">元の12ゲームを終了すると「履歴」に自動追加されます。ゲーム終了画面の「✓ 履歴に保存しました」も確認してください。</p><div id="storage-diagnostic" class="small" role="status" aria-live="polite" style="margin-top:9px"></div></div><div class="card"><h3>🗄 バックアップ</h3><div class="button-row"><button class="secondary" data-action="csv">CSVを保存</button><button class="secondary" data-action="json">JSONを保存</button></div><label class="label">バックアップから復元（同じIDは重複追加しません）</label><input class="field" id="import" type="file" accept=".json,application/json"><p class="small" style="margin-top:9px">ブラウザの閲覧データを消すと端末内の記録は失われます。シート連携と定期バックアップが安心です。</p></div>`}
 function csv(){let cols=['id','timestamp','source','title','level','side','eyes','durationSec','count','correct','rawScore','synced'];let rows=[cols.join(','),...db.history.map(r=>cols.map(k=>`"${String(r[k]??'').replace(/"/g,'""')}"`).join(','))];download('noukatsu-personal-history.csv','\ufeff'+rows.join('\r\n'),'text/csv;charset=utf-8')}
 function download(name,txt,type){let a=document.createElement('a'),url=URL.createObjectURL(new Blob([txt],{type}));a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2500)}
+// 結果を受け取ってから端末保存を完了するまで直列化。postMessageとstorage両方で届いても重複しない。
+function importGameEvent(m){
+ gameIntake=gameIntake.catch(()=>false).then(()=>storeGameEvent(m));
+ return gameIntake;
+}
+function readGameOutbox(){
+ try{const a=JSON.parse(localStorage.getItem(GAME_OUTBOX)||'[]');return Array.isArray(a)?a.slice(-500):[]}
+ catch(_){return []}
+}
+function removeGameOutboxId(id){
+ try{const a=readGameOutbox(),keep=a.filter(v=>v?.id!==id);if(keep.length!==a.length)localStorage.setItem(GAME_OUTBOX,JSON.stringify(keep))}
+ catch(_){/* ブラウザ保存が無効な環境ではメッセージで記録 */}
+}
+function acknowledgeGame(id){
+ removeGameOutboxId(id);
+ const fr=document.querySelector('.game-frame');
+ try{fr?.contentWindow?.postMessage({type:'NOUKATSU_PERSONAL_RESULT_ACK',id},location.origin==='null'?'*':location.origin)}catch(_){}
+}
+async function storeGameEvent(m){
+ if(!m||typeof m!=='object'||typeof m.title!=='string'||typeof m.score!=='string')return false;
+ const id=typeof m.id==='string'&&/^[a-zA-Z0-9_-]{8,128}$/.test(m.id)?m.id:uid();
+ if(db.history.some(r=>r.id===id)){acknowledgeGame(id);return true}
+ const item={id,source:'game',game:String(m.mode||'game').slice(0,35),title:m.title.slice(0,65),level:String(m.level||'').slice(0,22),side:'',eyes:'',durationSec:null,count:null,correct:null,rawScore:m.score.slice(0,130),timestamp:!Number.isNaN(Date.parse(m.timestamp))?m.timestamp:new Date().toISOString(),synced:false};
+ db.history.unshift(item);
+ if(!await save()){
+  db.history=db.history.filter(r=>r!==item);
+  toast('ゲーム結果を端末に保存できませんでした。設定→保存機能をチェックしてください');
+  return false;
+ }
+ acknowledgeGame(id);
+ if(view==='history'||view==='home'||view==='settings')render();
+ toast('✓ 脳活ゲームの結果を履歴に保存しました');
+ void syncAll();
+ return true;
+}
+async function importGameOutbox(){
+ let events=readGameOutbox(),imported=0;
+ for(const m of events){if(await importGameEvent(m))imported++}
+ return imported;
+}
 function syncSettingOk(){return /^https:\/\/script\.google\.com\/macros\/s\/[a-zA-Z0-9_-]+\/exec$/.test(db.settings.sheetUrl)&&db.settings.token.trim().length>=16}
 function jsonpReceipt(id){return new Promise(resolve=>{const cb='wbrNoukatsu_'+Math.random().toString(36).slice(2);let done=false;const script=document.createElement('script');const timeout=setTimeout(()=>end(false),7000);function end(v){if(done)return;done=true;clearTimeout(timeout);script.remove();delete window[cb];resolve(v)}window[cb]=(v)=>end(!!v?.found);script.onerror=()=>end(false);script.src=db.settings.sheetUrl+'?action=receipt&id='+encodeURIComponent(id)+'&callback='+encodeURIComponent(cb)+'&cache='+Date.now();document.head.append(script)})}
-async function syncAll(){if(busySync||!syncSettingOk())return;busySync=true;let n=0;try{for(const r of db.history.filter(x=>!x.synced).slice(-100)){let confirmed=false;try{confirmed=await jsonpReceipt(r.id);if(!confirmed){await fetch(db.settings.sheetUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:db.settings.token,event:{...r}})});for(let j=0;j<3&&!confirmed;j++){await new Promise(res=>setTimeout(res,700*(j+1)));confirmed=await jsonpReceipt(r.id)}}}catch(e){console.warn('sync pending',e)}if(confirmed){r.synced=true;if(await save())n++;else r.synced=false}}if(n)toast(`${n}件をスプレッドシートで確認できました`);else if(db.history.some(r=>!r.synced))toast('転記の確認待ちがあります。設定・アクセス権を確認して再試行してください。')}finally{busySync=false;if(view==='history'||view==='settings'||view==='result')render()}}
+async function syncAll(){if(!syncSettingOk())return;if(busySync){resyncRequested=true;return;}busySync=true;let n=0;try{for(const r of db.history.filter(x=>!x.synced).slice(-100)){let confirmed=false;try{confirmed=await jsonpReceipt(r.id);if(!confirmed){await fetch(db.settings.sheetUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:db.settings.token,event:{...r}})});for(let j=0;j<3&&!confirmed;j++){await new Promise(res=>setTimeout(res,700*(j+1)));confirmed=await jsonpReceipt(r.id)}}}catch(e){console.warn('sync pending',e)}if(confirmed){r.synced=true;if(await save())n++;else r.synced=false}}if(n)toast(`${n}件をスプレッドシートで確認できました`);else if(db.history.some(r=>!r.synced))toast('転記の確認待ちがあります。設定・アクセス権を確認して再試行してください。')}finally{busySync=false;if(view==='history'||view==='settings'||view==='result')render();if(resyncRequested){resyncRequested=false;setTimeout(()=>void syncAll(),500)}}}
 async function handleGameEvent(e){
 const fr=document.querySelector('.game-frame');
 if(!fr||e.source!==fr.contentWindow||e.origin!==location.origin||!e.data||typeof e.data!=='object')return;
@@ -145,16 +191,16 @@ if(e.data.type==='NOUKATSU_PROFILE_UPDATED'){
  if(await save())toast('ゲーム側のプロフィールも保存したよ');return;
 }
 if(e.data.type!=='NOUKATSU_GAME_RESULT')return;
-const m=e.data.event;if(!m||typeof m.title!=='string'||typeof m.score!=='string')return;
-const item={id:uid(),source:'game',game:String(m.mode||'game').slice(0,35),title:m.title.slice(0,65),level:String(m.level||'').slice(0,22),side:'',eyes:'',durationSec:null,count:null,correct:null,rawScore:m.score.slice(0,130),timestamp:new Date().toISOString(),synced:false};
-db.history.unshift(item);if(!await save()){db.history.shift();return;}toast('脳活ゲームの結果を記録したよ！');void syncAll();
+void importGameEvent(e.data.event);
 }
 window.addEventListener('message',handleGameEvent);
+window.addEventListener('storage',e=>{if(e.key===GAME_OUTBOX&&initialized)void importGameOutbox()});
+window.addEventListener('pageshow',()=>{if(initialized)void importGameOutbox()});
 document.addEventListener('click',async e=>{let b=e.target.closest('[data-action]');if(!b||!initialized)return;let a=b.dataset.action;if(a==='view'){stopTimer();runPhase='ready';view=b.dataset.view;render()}
 else if(a==='exercise'){stopTimer();mode=b.dataset.mode;level='beginner';eyes='open';view='exercise';render()}
 else if(a==='level'){level=b.dataset.level;if(level!=='advanced')eyes='open';render()}else if(a==='side'){side=b.dataset.side;render()}else if(a==='eyes'){eyes=b.dataset.eyes;render()}else if(a==='ready')startPrep();else if(a==='increment')setCount(totalCount+1);else if(a==='decrement')setCount(totalCount-1);else if(a==='pause')pause();else if(a==='resume')resume();else if(a==='stop')stop();else if(a==='abandon'){stopTimer();runPhase='ready';view='exercise';render()}
 else if(a==='save-result')saveResult();else if(a==='history-level'){level=b.dataset.level;render()}else if(a==='history-side'){side=b.dataset.side;render()}else if(a==='history-eyes'){eyes=b.dataset.eyes;render()}else if(a==='period'){period=Number(b.dataset.period);render()}else if(a==='csv')csv();else if(a==='json')download('noukatsu-personal-backup.json',JSON.stringify({version:1,exportedAt:new Date().toISOString(),history:db.history,profile:db.profile},null,2),'application/json');else if(a==='profile-save'){const name=document.querySelector('#name').value.trim(),age=Number(document.querySelector('#age').value);db.profile.name=name.slice(0,18);db.profile.age=Number.isInteger(age)&&age>=1&&age<=120?age:'';if(await save()){toast('プロフィールを保存しました');render()}}
-else if(a==='storage-check'){await diagnoseStorage()}
+else if(a==='storage-check'){await diagnoseStorage()}else if(a==='recover-games'){const before=db.history.length;await importGameOutbox();toast(`ゲーム結果の再取込：${db.history.length-before}件`);render()}
 else if(a==='sync-save'){let url=document.querySelector('#sheet-url').value.trim(),token=document.querySelector('#sheet-token').value.trim();db.settings.sheetUrl=url;db.settings.token=token;if(await save()){toast('連携設定を端末に保存しました');render()}}
 else if(a==='sync'){db.settings.sheetUrl=document.querySelector('#sheet-url').value.trim();db.settings.token=document.querySelector('#sheet-token').value.trim();if(!await save())return;if(!syncSettingOk()){toast('GASのURLと16文字以上のトークンを確認してね');return;}void syncAll()}});
 app.addEventListener('input',e=>{if(e.target.id==='count-input'){const n=Math.max(0,Math.min(99999,Math.floor(Number(e.target.value)||0)));totalCount=n;const v=document.querySelector('#count-live');if(v)v.textContent=n;}else if(e.target.id==='correct-input'){correctCount=Math.max(0,Math.min(999,Math.floor(Number(e.target.value)||0)));}});

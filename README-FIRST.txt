@@ -1,4 +1,5 @@
-やさしい脳活日和｜個人専用 v1.1.0
+【最終版 v1.1.3】12ゲームの結果転記については README-v1.1.3.txt を参照。
+やさしい脳活日和｜個人専用 v1.1.2
 =================================
 更新日：2026-10-28
 
@@ -9,7 +10,7 @@
 ログインなしで使えるシングルユーザー版です。
 
 ■ GitHub Pages にアップロード
-Noukatsu-Personal-v1.1.0-GitHub.zip を解凍し、ZIP内の「中身」を
+Noukatsu-Personal-v1.1.2-Cache-Storage-Fix-GitHub.zip を解凍し、ZIP内の「中身」を
 新規リポジトリ Noukatsu-Personal のルートにアップロードしてください。
 index.html, app.js, style.css, bridge.js, sw.js, manifest.webmanifest, games/ が必要です。
 Settings > Pages > Deploy from a branch > main / (root) でサイト公開。
@@ -51,6 +52,6 @@ https://www.cdc.gov/steadi/media/pdfs/steadi-assessment-30sec-508.pdf
 痛み・ふらつきがあれば止めてください。閉眼片足立ちは一人で行わないでください。
 
 ■ 個人データ
-端末内：localStorage。ブラウザデータ消去や端末変更で端末内履歴が消えることがあります。
+端末内：localStorage と IndexedDB（代替保存）。ブラウザデータ消去や端末変更で端末内履歴が消えることがあります。
 「設定」→「JSONを保存」で定期的にバックアップしてください。
 スマホ/PCをまたぐリアルタイム双方向同期や履歴の自動復元は未実装です。
