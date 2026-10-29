@@ -1,7 +1,7 @@
-【最終版 v1.1.3】12ゲームの結果転記については README-v1.1.3.txt を参照。
-やさしい脳活日和｜個人専用 v1.1.2
+【個人版 v1.1.5】12ゲームの結果転記については README-v1.1.5.txt を参照。
+やさしい脳活日和｜個人専用 v1.1.5
 =================================
-更新日：2026-10-28
+更新日：2026-10-29
 
 ■ このアプリについて
 無料の元「やさしい脳活日和」（ユーザー提供ZIPのv1.6.6・全12ゲーム）を一切置き換えず、
@@ -10,7 +10,7 @@
 ログインなしで使えるシングルユーザー版です。
 
 ■ GitHub Pages にアップロード
-Noukatsu-Personal-v1.1.2-Cache-Storage-Fix-GitHub.zip を解凍し、ZIP内の「中身」を
+Noukatsu-Personal-v1.1.5-Game-Record-Fallback-GitHub.zip を解凍し、ZIP内の「中身」を
 新規リポジトリ Noukatsu-Personal のルートにアップロードしてください。
 index.html, app.js, style.css, bridge.js, sw.js, manifest.webmanifest, games/ が必要です。
 Settings > Pages > Deploy from a branch > main / (root) でサイト公開。
